@@ -1,0 +1,2 @@
+# Only for notifications; everything else works without it. Brings cryptography along.
+PyJWT[crypto]

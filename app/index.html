@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <meta name="theme-color" content="#16171f">
+  <title>Comfy Phone</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon-192.png">
+  <link rel="stylesheet" href="vendor/photoswipe.css">
+  <link rel="stylesheet" href="style.css">
+  <!-- The chosen theme before the first paint, so a light app doesn't flash dark. -->
+  <script>try { const t = localStorage.getItem("theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch {}</script>
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <h1>Comfy Phone</h1>
+    <span class="topbar-end">
+      <span id="conn" class="conn" role="status" aria-live="polite">
+        <span class="dot" aria-hidden="true"></span><span class="conn-text">Connecting…</span>
+      </span>
+      <a id="settings-link" class="icon-btn" href="#settings" aria-label="Settings">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.27 9.78 L22.27 10.37 L22.27 13.63 L19.27 14.22 L18.71 15.57 L20.41 18.11 L18.11 20.41 L15.57 18.71 L14.22 19.27 L13.63 22.27 L10.37 22.27 L9.78 19.27 L8.43 18.71 L5.89 20.41 L3.59 18.11 L5.29 15.57 L4.73 14.22 L1.73 13.63 L1.73 10.37 L4.73 9.78 L5.29 8.43 L3.59 5.89 L5.89 3.59 L8.43 5.29 L9.78 4.73 L10.37 1.73 L13.63 1.73 L14.22 4.73 L15.57 5.29 L18.11 3.59 L20.41 5.89 L18.71 8.43Z"/><circle cx="12" cy="12" r="3.2"/></svg>
+      </a>
+    </span>
+  </header>
+
+  <main>
+    <section id="view-workflows" aria-labelledby="h-workflows">
+      <div class="view-head">
+        <h2 id="h-workflows">Workflows</h2>
+        <button id="workflow-reorder" class="chip" hidden>Reorder</button>
+      </div>
+      <p class="offline-note bad">Offline: showing the copies on this phone. Newer versions on the PC can't be checked right now.</p>
+      <ul id="workflow-list" class="list" aria-live="polite"></ul>
+      <p id="workflow-empty" class="empty" hidden>No shared workflows yet. In ComfyUI on your PC, open a
+        workflow and choose <b>File → Share to phone</b>.</p>
+      <details class="card connection">
+        <summary>Connection details</summary>
+        <div id="status-card"><p>Checking connection to ComfyUI…</p></div>
+      </details>
+    </section>
+
+    <section id="view-workflow" aria-labelledby="h-workflow" hidden>
+      <div class="editor-top">
+        <a class="back" href="#workflows">‹ Workflows</a>
+        <span id="save-status" class="save-status" role="status" aria-live="polite"></span>
+      </div>
+      <div class="title-row">
+        <h2 id="h-workflow"></h2>
+        <button id="rename-btn" class="icon-btn" aria-label="Rename workflow" hidden>✎</button>
+      </div>
+      <div class="editor-actions">
+        <button id="reorder-btn" class="chip">Reorder</button>
+        <button id="reset-btn" class="chip">Reset to PC values</button>
+        <button id="delete-btn" class="chip danger">Delete</button>
+      </div>
+      <p class="offline-note bad">Offline: only the values can be changed. They're kept on this phone and go to the PC when it's back.</p>
+      <ul id="field-list" class="list fields"></ul>
+      <div class="generate-bar">
+        <div class="stepper" role="group" aria-label="Number of images">
+          <button id="count-minus" class="icon-btn" aria-label="Fewer images">−</button>
+          <input id="count" type="number" inputmode="numeric" min="1" max="100" value="1" aria-label="Number of images">
+          <button id="count-plus" class="icon-btn" aria-label="More images">+</button>
+        </div>
+        <button id="generate-btn" class="primary">Generate</button>
+      </div>
+    </section>
+
+    <section id="view-prompts" aria-labelledby="h-prompts" hidden>
+      <div class="view-head">
+        <h2 id="h-prompts">Prompts</h2>
+        <span class="head-btns">
+          <button id="prompt-reorder" class="chip" hidden>Reorder</button>
+          <button id="prompt-new" class="chip">+ New</button>
+        </span>
+      </div>
+      <div id="prompt-kind" class="segmented prompt-kind" role="group" aria-label="Show">
+        <button class="seg" data-kind="prompt">Prompts</button>
+        <button class="seg" data-kind="snippet">Snippets</button>
+      </div>
+      <input id="prompt-search" type="search" placeholder="Search…" aria-label="Search">
+      <ul id="prompt-list" class="list prompt-list"></ul>
+      <p id="prompt-empty" class="empty" hidden></p>
+      <p id="prompt-sync" class="item-meta prompt-sync"></p>
+    </section>
+
+    <section id="view-tasks" aria-labelledby="h-tasks" hidden>
+      <h2 id="h-tasks">Tasks</h2>
+      <p id="tasks-error" class="bad" role="alert" hidden></p>
+      <h3 id="queue-head" class="section-head" hidden>Queue</h3>
+      <ul id="queue-list" class="list"></ul>
+      <div id="finished-head" class="section-head" hidden>
+        <h3>Finished</h3>
+        <button id="clear-finished" class="chip">Clear list</button>
+      </div>
+      <p id="finished-full" class="muted small" hidden>Only the newest 100 finished tasks are kept.</p>
+      <ul id="finished-list" class="list"></ul>
+      <p id="tasks-empty" class="empty" hidden>Nothing queued yet.</p>
+    </section>
+
+    <section id="view-gallery" aria-labelledby="h-gallery" hidden>
+      <div class="gallery-head">
+        <h2 id="h-gallery">Gallery</h2>
+        <span class="head-btns">
+          <button id="save-format" class="chip" hidden>Save as WebP</button>
+          <button id="select-btn" class="chip" hidden>Select</button>
+        </span>
+      </div>
+      <p id="gallery-stats" class="item-meta"></p>
+      <ul id="gallery-grid" class="thumbs gallery-grid"></ul>
+      <p id="gallery-empty" class="empty" hidden></p>
+      <div class="select-bar">
+        <span id="select-count" role="status" aria-live="polite"></span>
+        <button id="save-selected" class="chip">Save</button>
+        <button id="delete-selected" class="chip danger">Delete</button>
+      </div>
+    </section>
+
+    <section id="view-settings" aria-labelledby="h-settings" hidden>
+      <h2 id="h-settings">Settings</h2>
+      <div class="card setting">
+        <h3>Theme</h3>
+        <div id="theme-choice" class="segmented" role="group" aria-label="Theme">
+          <button class="seg" data-value="system">System</button>
+          <button class="seg" data-value="light">Light</button>
+          <button class="seg" data-value="dark">Dark</button>
+        </div>
+      </div>
+      <div class="card setting">
+        <div class="setting-row">
+          <h3 id="auto-copy-label">Copy new images to the gallery</h3>
+          <button id="auto-copy" class="switch" role="switch" aria-checked="false" aria-labelledby="auto-copy-label"></button>
+        </div>
+        <p class="item-meta">Images you generate from the phone are copied to the gallery as they finish, so you can see
+          them without the PC. When off, they stay on the PC, and you add the ones you want from Tasks.</p>
+      </div>
+      <div class="card setting">
+        <div class="setting-row">
+          <h3 id="notify-label">Notify me when images are ready</h3>
+          <button id="notify" class="switch" role="switch" aria-checked="false" aria-labelledby="notify-label"></button>
+        </div>
+        <p class="item-meta">Uses Google's push service to wake the app; the message itself is empty. Your PC needs an
+          internet connection for this.</p>
+        <p id="notify-state" class="item-meta bad" hidden></p>
+        <button id="notify-test" class="chip setting-action" hidden>Send a test notification</button>
+      </div>
+      <hr class="divider">
+      <div class="card setting danger-zone">
+        <h3>Delete</h3>
+        <label class="check-row"><input type="checkbox" id="del-images"><span>Images</span><span id="del-images-info" class="item-meta"></span></label>
+        <label class="check-row"><input type="checkbox" id="del-prompts"><span>Prompts</span><span id="del-prompts-info" class="item-meta"></span></label>
+        <label class="check-row"><input type="checkbox" id="del-snippets"><span>Snippets</span><span id="del-snippets-info" class="item-meta"></span></label>
+        <button id="delete-selected-data" class="danger-btn" disabled>Delete selected…</button>
+        <p class="item-meta">Images are deleted from this phone; the files on the PC stay. Prompts and snippets are
+          deleted on all your devices.</p>
+      </div>
+    </section>
+  </main>
+
+  <nav class="tabbar" aria-label="Sections">
+    <a href="#workflows">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+      <span>Workflows</span>
+    </a>
+    <a href="#prompts">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14v10H10l-4 4v-4H5z"/><path d="M8.5 9h7M8.5 12h4.5"/></svg>
+      <span>Prompts</span>
+    </a>
+    <a href="#tasks">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg>
+      <span>Tasks</span>
+    </a>
+    <a href="#gallery">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="m4 16 5-5 4 4 3-3 4 4"/></svg>
+      <span>Gallery</span>
+    </a>
+  </nav>
+</body>
+</html>
