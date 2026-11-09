@@ -1,5 +1,5 @@
 // Workflow editor: one control per shared field, autosave, reorder and Generate.
-import { $, api, h, keyboardOpen, splitPath, thumbUrl, toast } from "./api.js";
+import { $, api, audioThumb, describeFile, fileLabel, fileRef, h, keyboardOpen, originalUrl, splitPath, thumbUrl, toast } from "./api.js";
 import { paintMask } from "./mask.js";
 import { pick } from "./picker.js";
 import { fieldMenu } from "./prompts.js";
@@ -342,7 +342,8 @@ function lorasControl(loras, loraOptions, onChange) {
 function control(field, value, prompt, loraOptions) {
   const classType = prompt[field.node]?.class_type;
   const spec = specOf(classType, field.input);
-  const onChange = (v) => set(keyOf(field), v);
+  const owner = state; // a change arriving late (an upload) after another workflow was opened, or Reset, is dropped
+  const onChange = (v) => state === owner && set(keyOf(field), v);
   switch (field.kind) {
     case "note": // edits are kept with the workflow but change nothing in it
     case "text": {
@@ -380,7 +381,7 @@ function control(field, value, prompt, loraOptions) {
     case "bool":
       return toggle(!!value, field.label, onChange);
     case "combo":
-      return comboControl(field, spec, value, onChange);
+      return field.media ? mediaControl(field, spec, value, onChange) : comboControl(field, spec, value, onChange);
     case "seed":
       return seedControl(field, spec, value, onChange);
     case "loras":
@@ -396,33 +397,133 @@ function control(field, value, prompt, loraOptions) {
 
 // ---------- image + mask ----------
 
-/** "phone/a.jpg" -> the input-folder thumbnail, turned like the loader turns it. */
-function inputThumb(name, size) {
-  const parts = name.split("/");
-  return thumbUrl({ filename: parts.pop(), subfolder: parts.join("/"), type: "input" }, size);
-}
+/** "phone/a.jpg" or "a.png [output]" -> its thumbnail, turned like the loader turns it. */
+const inputThumb = (name, size) => thumbUrl(fileRef(name), size);
 
-async function upload(file) {
-  const ext = (/\.\w+$/.exec(file.name)?.[0] ?? ".jpg").toLowerCase();
+const megabytes = (bytes) => `${Math.ceil(bytes / 1048576)} MB`;
+
+/** Sends a photo, video or audio file from the phone to input/phone; returns its name for the loader.
+ * onProgress(0…1) while it goes; onStart(abort) hands over a way to stop it (the error then has .cancelled).
+ * Errors say why, in words. */
+async function upload(file, onProgress, onStart) {
+  const { max_upload: limit } = await api("api/status").catch(() => {
+    throw new Error("the PC can't be reached");
+  });
+  if (limit && file.size > limit) {
+    throw new Error(`it's ${megabytes(file.size)}, and ComfyUI takes at most ${megabytes(limit)} (more if you start it with --max-upload-size)`);
+  }
+  // No extension in the name: from its type ("video/mp4" -> .mp4), else .jpg
+  const fromType = { "video/quicktime": "mov", "audio/mpeg": "mp3" }[file.type] ?? /^\w+\/(\w+)$/.exec(file.type)?.[1];
+  const ext = (/\.\w+$/.exec(file.name)?.[0] ?? (fromType ? `.${fromType}` : ".jpg")).toLowerCase();
   const form = new FormData();
-  form.append("image", file, `phone-${Date.now()}${ext}`);
+  form.append("image", file, `phone-${Date.now()}${ext}`); // ComfyUI's upload takes any file under this name
   form.append("subfolder", "phone");
   form.append("type", "input");
-  const res = await fetch("/api/upload/image", { method: "POST", body: form });
-  if (!res.ok) throw new Error(`upload failed (HTTP ${res.status})`);
-  const data = await res.json();
-  return data.subfolder ? `${data.subfolder}/${data.name}` : data.name;
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest(); // unlike fetch, it tells how far the upload is
+    xhr.open("POST", "/api/upload/image");
+    xhr.upload.onprogress = (e) => e.lengthComputable && onProgress(e.loaded / e.total);
+    xhr.onload = () => {
+      if (xhr.status === 413) return reject(new Error(`it's too large for ComfyUI (at most ${megabytes(limit)})`));
+      if (xhr.status !== 200) return reject(new Error("the PC didn't take the file"));
+      try {
+        const data = JSON.parse(xhr.responseText);
+        resolve(data.subfolder ? `${data.subfolder}/${data.name}` : data.name);
+      } catch {
+        reject(new Error("the PC's answer was unreadable"));
+      }
+    };
+    xhr.onerror = () => reject(new Error("the connection to the PC broke off. Try again, and keep the app open while it uploads"));
+    xhr.onabort = () => reject(Object.assign(new Error("cancelled"), { cancelled: true }));
+    xhr.send(form);
+    onStart(() => xhr.abort()); // after send: only then does abort() end the promise
+  });
 }
 
-/** The pictures in ComfyUI's input folder, as the loader lists them; asked anew so new files show up. */
-async function inputImages(classType, input, spec) {
+/** Uploads for a field: its caption shows the progress, and after a second "Cancel upload" takes the place of
+ * its buttons (quick uploads never show it). Returns the file's name, or undefined if cancelled or failed. */
+async function uploadInField(file, what, caption, actions) {
+  const owner = state; // counted per workflow: Generate waits for all of its uploads
+  owner.uploading = (owner.uploading ?? 0) + 1;
+  let abort = null;
+  let stop = false; // tapped while the PC was still being asked for its limit: stop as soon as sending starts
+  const later = setTimeout(() => actions.replaceChildren(h("button", { className: "chip", textContent: "Cancel upload",
+    onclick: () => ((stop = true), abort?.()) })), 1000);
+  caption.textContent = "Uploading…";
   try {
-    const info = await api(`/api/object_info/${encodeURIComponent(classType)}`);
-    specCache.set(classType, info[classType]?.input ?? {});
-    return comboOptions(specOf(classType, input));
-  } catch {
-    return comboOptions(spec); // offline: the list from when the workflow was opened
+    const name = await upload(file, (p) => (caption.textContent = `Uploading… ${Math.round(p * 100)} %. Keep the app open.`),
+      (a) => ((abort = a), stop && a()));
+    if (state !== owner) toast(`The ${what} is on the PC now, but its workflow was closed meanwhile. It's at the top of "From PC".`);
+    return name;
+  } catch (err) {
+    if (err.cancelled) toast("Upload cancelled");
+    else toast(`Couldn't upload the ${what}: ${err.message}`, "bad");
+    return undefined;
+  } finally {
+    clearTimeout(later);
+    owner.uploading--;
   }
+}
+
+/** Files of this kind on the PC (input and output folders, newest first); asked anew so new files show up. */
+async function pcFiles(kind, spec) {
+  try {
+    return await api(`api/files?kind=${kind}`);
+  } catch {
+    return comboOptions(spec); // offline: the loader's list from when the workflow was opened (input folder only)
+  }
+}
+
+/** Lets you pick one of the PC's files; undefined when closed without a choice. */
+async function pickPcFile(kind, spec, current) {
+  const files = await pcFiles(kind, spec);
+  if (!files.length) {
+    toast(`No ${kind === "audio" ? "audio files" : `${kind}s`} in ComfyUI's input or output folder`, "bad");
+    return undefined;
+  }
+  const thumb = kind === "audio" ? () => audioThumb : (o) => thumbUrl(fileRef(o), 512);
+  return pick(`${kind === "image" ? "Pictures" : kind === "video" ? "Videos" : "Audio"} on the PC`, files, current, describeFile, false, thumb);
+}
+
+/** Video or audio: a player for the chosen file, then "Choose video/audio" (from the phone) and "From PC". */
+function mediaControl(field, spec, value, onChange) {
+  const kind = field.media;
+  const box = h("div", { className: "image-field" });
+  const fileInput = h("input", { type: "file", accept: `${kind}/*`, hidden: true });
+  const caption = h("p", { className: "item-meta" });
+  const choose = (name) => {
+    value = name;
+    onChange(name);
+    render();
+  };
+
+  fileInput.addEventListener("change", async () => {
+    const file = fileInput.files[0];
+    fileInput.value = "";
+    if (!file) return;
+    const name = await uploadInField(file, kind, caption, box.querySelector(".image-actions"));
+    if (name) choose(name);
+    else render(); // the buttons back
+  });
+
+  function render() {
+    caption.textContent = value ? fileLabel(value) : `No ${kind} chosen`;
+    box.replaceChildren(
+      // preload=metadata: only the start of the file, to show its first frame and length
+      value ? h(kind, { className: "media-preview", src: originalUrl(fileRef(value)), controls: true, preload: "metadata",
+        playsInline: true, onerror: (e) => e.target.remove() }) : null,
+      caption,
+      h("div", { className: "image-actions" },
+        h("button", { className: "chip", textContent: `Choose ${kind}`, onclick: () => fileInput.click() }),
+        h("button", { className: "chip", textContent: "From PC", onclick: async () => {
+          const chosen = await pickPcFile(kind, spec, value);
+          if (chosen !== undefined && chosen !== value) choose(chosen);
+        } })),
+      fileInput);
+  }
+
+  render();
+  return box;
 }
 
 function imageControl(field, spec, value, prompt, onChange) {
@@ -447,24 +548,16 @@ function imageControl(field, spec, value, prompt, onChange) {
     const file = fileInput.files[0];
     fileInput.value = "";
     if (!file) return;
-    state.uploading = true;
-    caption.textContent = "Uploading…";
-    try {
-      // A new photo starts without a mask; an old mask wouldn't fit it.
-      update({ image: await upload(file), mask: hasMask ? "" : null });
-    } catch (err) {
-      toast(`Couldn't upload the photo (${err.message})`, "bad");
-      render();
-    } finally {
-      state.uploading = false;
-    }
+    const name = await uploadInField(file, "photo", caption, box.querySelector(".image-actions"));
+    if (name) update({ image: name, mask: hasMask ? "" : null }); // a new photo starts without a mask; an old one wouldn't fit
+    else render(); // the buttons back
   });
 
   const caption = h("p", { className: "item-meta" });
   function render() {
     const mask = current.mask ?? (trix ? node.inputs.mask_data : "");
     const pcMask = !trix && current.mask === null; // a Load Image mask painted on the PC isn't shown here
-    caption.textContent = `${current.image.split("/").pop()}${hasMask ? (mask ? " · mask painted" : pcMask ? " · mask as on the PC" : " · no mask yet") : ""}`;
+    caption.textContent = `${fileLabel(current.image)}${hasMask ? (mask ? " · mask painted" : pcMask ? " · mask as on the PC" : " · no mask yet") : ""}`;
     box.replaceChildren(
       h("button", { className: "image-preview", "aria-label": hasMask ? "Paint mask" : "Choose photo",
         onclick: () => (hasMask ? openPainter(mask) : fileInput.click()) },
@@ -480,10 +573,7 @@ function imageControl(field, spec, value, prompt, onChange) {
   }
 
   async function fromPC() {
-    const images = await inputImages(node.class_type, field.input, spec);
-    if (!images.length) return toast("No pictures in ComfyUI's input folder on the PC", "bad");
-    const chosen = await pick("Pictures on the PC", images, current.image,
-      (o) => ({ name: o.split("/").pop(), folder: o.split("/").slice(0, -1).join("/") }), false, (o) => inputThumb(o, 512));
+    const chosen = await pickPcFile("image", spec, current.image);
     if (chosen !== undefined && chosen !== current.image) update({ image: chosen, mask: hasMask ? "" : null });
   }
 
@@ -613,7 +703,7 @@ export async function showWorkflow(id) {
 
 async function generate() {
   if (!state) return;
-  if (state.uploading) return toast("Wait until the photo is uploaded", "bad");
+  if (state.uploading) return toast("Wait until the upload is done", "bad");
   const btn = $("#generate-btn");
   if (btn.disabled) return;
   btn.disabled = true;

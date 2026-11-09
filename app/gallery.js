@@ -1,6 +1,6 @@
 // Gallery: copies of finished images kept on the phone (IndexedDB), so they also show without the PC.
 import PhotoSwipe from "./vendor/photoswipe.esm.min.js";
-import { $, api, AUDIO_SVG, audioThumb, closeOnBack, esc, isAudio, isoDate, isoDateTime, isVideo, originalUrl, setting, thumbUrl, toast } from "./api.js";
+import { $, api, AUDIO_SVG, audioThumb, closeOnBack, esc, fileLabel, fileRef, isAudio, isoDate, isoDateTime, isVideo, originalUrl, setting, thumbUrl, toast } from "./api.js";
 
 const COPY_SIZE = 8192; // full-size WebP (up to 8192 px a side): ~1 MB instead of a ~20 MB PNG
 
@@ -331,6 +331,9 @@ function formatValue(d) {
   const v = d.value;
   if (v === null || v === undefined || v === "") return "–";
   if (d.kind === "bool") return v ? "Yes" : "No";
+  // Files as "a.mp4 · output/video"; of the lists, those from output, and videos and audio (uploads from the phone)
+  const file = d.kind === "combo" && fileRef(v);
+  if (d.kind === "image" || file && (file.type === "output" || isVideo(file) || isAudio(file))) return fileLabel(v);
   if (d.kind === "loras") {
     const on = v.filter((l) => l.on);
     return on.length ? on.map((l) => `${l.lora} · ${l.strength}`).join("\n") : "None";

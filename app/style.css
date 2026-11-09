@@ -533,6 +533,8 @@ body.selecting main { padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset
 .image-preview img { display: block; width: 100%; max-height: 50vh; object-fit: contain; }
 .image-preview .mask-overlay { position: absolute; inset: 0; height: 100%; max-height: none; opacity: .5; }
 .image-field .item-meta { margin: 0; overflow-wrap: anywhere; }
+video.media-preview { display: block; width: 100%; max-height: 50vh; border-radius: 12px; background: #000; }
+audio.media-preview { display: block; width: 100%; }
 .image-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 
 .painter {

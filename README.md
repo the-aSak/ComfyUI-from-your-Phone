@@ -43,8 +43,9 @@ It is a ComfyUI custom node with the phone app built in. Nothing else to install
 
 **Workflows**
 - Text, numbers, switches, lists with search (models and LoRAs come live from the PC), seeds (random or fixed),
-  Power Lora Loader rows, photos from the phone or pictures from ComfyUI's `input` folder, with a mask you paint
-  with your finger.
+  Power Lora Loader rows, photos with a mask you paint with your finger, videos and audio (Load Video, Load Audio and
+  the VideoHelperSuite's loaders). Take them from the phone, or pick one that's already on the PC: one list of
+  ComfyUI's `input` and `output` folders, newest first, so the clip you just made is right at the top.
 - Dynamic prompts like `{red|blue|green}` and `//` comments, rolled for each image as ComfyUI does.
 - Reorder, rename, reset to the PC's values. Pick how many images, tap **Generate**.
 - Works offline too: look at the workflows you opened on this phone before and change values; they go to the PC
@@ -197,8 +198,9 @@ node's folder deletes it.
 | `push.json` | the key and phones for notifications |
 | `thumbs/` | preview images, emptied whenever ComfyUI starts |
 
-Elsewhere on the PC: your images are in ComfyUI's `output` folder as always. Photos you pick on the phone are
-uploaded to `input/phone` (with a copy for each painted mask) and stay there until you delete them.
+Elsewhere on the PC: your images are in ComfyUI's `output` folder as always. Photos, videos and audio you pick on the phone are
+uploaded to `input/phone` (with a copy for each painted mask) and stay there until you delete them. ComfyUI takes
+uploads of up to 100 MB; start it with `--max-upload-size` to allow more, and the app follows.
 
 On the phone, in the app's own storage: the gallery copies, the prompt library, and the workflows opened there.
 The app asks Chrome to keep this storage, but Android may still clear it when space runs out, so save the images
@@ -228,7 +230,7 @@ updates the next time you open it. Your data in `data/` stays.
 ## Uninstalling
 
 1. Delete the node's folder in `custom_nodes`, then restart ComfyUI. This also deletes its `data/` folder.
-   (Your images in `output`, and the photos in `input/phone`, stay.)
+   (Your images in `output`, and the uploads in `input/phone`, stay.)
 2. `tailscale serve reset` on the PC stops sharing ComfyUI in your tailnet.
 3. Uninstall the app on the phone. This deletes its gallery and prompt library.
 

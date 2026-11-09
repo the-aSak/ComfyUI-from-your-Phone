@@ -154,10 +154,20 @@ def apply_values(record, values):
     return base
 
 
-def image_inputs(record, base):
-    """(label, file name) of every shared image field whose node runs (not bypassed)."""
+def file_inputs(record, base, media_kind=lambda class_type, name: None):
+    """(label, file name) of every shared image field, and every list of files (media_kind(class_type,
+    input) says which: Load Video, Load Audio…), whose node runs (not bypassed)."""
     return [(f["label"], base[f["node"]]["inputs"][f["input"]]) for f in record["fields"]
-            if f["kind"] == "image" and f["node"] in base and isinstance(base[f["node"]]["inputs"].get(f["input"]), str)]
+            if f["node"] in base and isinstance(base[f["node"]]["inputs"].get(f["input"]), str)
+            and (f["kind"] == "image" or f["kind"] == "combo" and media_kind(base[f["node"]].get("class_type"), f["input"]))]
+
+
+def shown_file(name):
+    """"video/a.mp4 [output]" -> "a.mp4 (output/video)": a loader's file name as people read it."""
+    folder = "output" if name.endswith(" [output]") else "input"
+    path = name.removesuffix(" [output]").removesuffix(" [input]")
+    sub, _, file = path.rpartition("/")
+    return f"{file} ({folder}/{sub})" if sub else f"{file} ({folder})"
 
 
 def alpha_masks(record, values, base):

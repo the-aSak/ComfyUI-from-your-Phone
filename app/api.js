@@ -151,5 +151,22 @@ export const AUDIO_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 5
   + `<ellipse cx="213" cy="338" rx="62" ry="46" transform="rotate(-20 213 338)"/></g></svg>`; // centred; stem flush with the head
 export const audioThumb = `data:image/svg+xml,${encodeURIComponent(AUDIO_SVG)}`;
 
+/** A file as ComfyUI's loaders name it ("sub/a.png", from the output folder "sub/a.png [output]")
+ * -> { filename, subfolder, type } as thumbUrl and originalUrl take it. */
+export function fileRef(name) {
+  const type = / \[output\]$/.test(name) ? "output" : "input";
+  const parts = String(name).replace(/ \[(output|input)\]$/, "").split("/");
+  return { filename: parts.pop(), subfolder: parts.join("/"), type };
+}
+
+/** "video/a.mp4 [output]" -> { name: "a.mp4", folder: "output/video" } (the picker's two lines). */
+export function describeFile(name) {
+  const f = fileRef(name);
+  return { name: f.filename, folder: f.subfolder ? `${f.type}/${f.subfolder}` : f.type };
+}
+
+/** "video/a.mp4 [output]" -> "a.mp4 · output/video" */
+export const fileLabel = (name) => Object.values(describeFile(name)).join(" · ");
+
 export const originalUrl = (img) =>
-  `api/original?type=output&filename=${encodeURIComponent(img.filename)}&subfolder=${encodeURIComponent(img.subfolder ?? "")}${version(img)}`;
+  `api/original?type=${img.type === "input" ? "input" : "output"}&filename=${encodeURIComponent(img.filename)}&subfolder=${encodeURIComponent(img.subfolder ?? "")}${version(img)}`;

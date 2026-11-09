@@ -1,17 +1,20 @@
 """ComfyUI-from-your-Phone: serves a mobile web app at /phone/ plus its API under /phone/api/."""
 import asyncio
+import functools
 import hashlib
+import os
 import random
 import uuid
 from pathlib import Path
 
 import folder_paths
+import nodes
 from aiohttp import web
 from comfy.cli_args import args
 from multidict import CIMultiDict
 from server import PromptServer
 
-from .jobs import MASK_PREFIX, VIDEO_SUFFIXES, JobQueue, alpha_masks, apply_values, build_job, image_inputs, job_details, validate_values
+from .jobs import MASK_PREFIX, VIDEO_SUFFIXES, JobQueue, alpha_masks, apply_values, build_job, file_inputs, job_details, shown_file, validate_values
 from .prompts import PromptLibrary
 from .push import Push, missing_packages
 from .workflows import WorkflowStore, pc_file_state, validate_share
@@ -106,6 +109,7 @@ async def phone_status(request):
         "ok": True,
         "comfyui_version": version,
         "queue_remaining": PromptServer.instance.prompt_queue.get_tasks_remaining(),
+        "max_upload": round(args.max_upload_size * 1024 * 1024),  # ComfyUI's own limit (--max-upload-size)
     })
 
 
@@ -228,7 +232,67 @@ async def get_workflow(request):
         return web.json_response({"error": "no longer on the PC"}, status=404, headers=GONE)
     # Without the PC's drawing of the workflow (often 100 KB): only the PC needs it, to put it into the PNGs.
     record.pop("workflow", None)
+    for f in record["fields"]:  # lists of videos or audio files get the phone's upload and "From PC" buttons
+        if f["kind"] == "combo" and (media := media_kind(record["prompt"].get(f["node"], {}).get("class_type"), f["input"])):
+            f["media"] = media
     return web.json_response(record)
+
+
+# The VideoHelperSuite adds its upload buttons in its own PC-side script, so ComfyUI doesn't flag these lists.
+VHS_UPLOADS = {("VHS_LoadVideo", "video"): "video", ("VHS_LoadVideoFFmpeg", "video"): "video",
+               ("VHS_LoadAudioUpload", "audio"): "audio"}
+
+
+@functools.cache
+def media_kind(class_type, name):
+    """"video" or "audio" when this input of the node is a list of such files that ComfyUI lets you upload
+    to (Load Video, Load Audio, …), else None."""
+    if (class_type, name) in VHS_UPLOADS:
+        return VHS_UPLOADS[class_type, name]
+    cls = nodes.NODE_CLASS_MAPPINGS.get(class_type)
+    try:  # read the way ComfyUI's /object_info reads it
+        inputs = cls.GET_NODE_INFO_V1()["input"] if hasattr(cls, "GET_NODE_INFO_V1") else cls.INPUT_TYPES()
+        spec = inputs.get("required", {}).get(name) or inputs.get("optional", {}).get(name)
+        opts = spec[1] if len(spec) > 1 and isinstance(spec[1], dict) else {}
+    except Exception:  # unknown node or input
+        return None
+    return "video" if opts.get("video_upload") else "audio" if opts.get("audio_upload") else None
+
+
+def _files(kind):
+    """Every file of this kind ("image", "video", "audio") in ComfyUI's input and output folders and their
+    subfolders, newest first, named the way the loaders take them: "sub/a.png", "sub/a.png [output]"."""
+    found = []
+
+    def walk(folder, prefix, mark):
+        try:
+            entries = list(os.scandir(folder))
+        except OSError:  # gone or unreadable: skipped, like hidden ones
+            return
+        for e in entries:
+            # Links and Windows junctions too: ComfyUI's loaders refuse what lies outside input/output anyway.
+            # (is_junction needs Python 3.12; older ones still list what's behind a junction)
+            if e.name.startswith(".") or e.is_symlink() or (hasattr(e, "is_junction") and e.is_junction()):
+                continue
+            if e.is_dir(follow_symlinks=False):
+                walk(e.path, f"{prefix}{e.name}/", mark)
+            elif folder_paths.filter_files_content_types([e.name], [kind]):  # ComfyUI's own idea of the type
+                try:
+                    found.append((e.stat().st_mtime, f"{prefix}{e.name}{mark}"))
+                except OSError:
+                    pass
+
+    walk(folder_paths.get_input_directory(), "", "")
+    walk(folder_paths.get_output_directory(), "", " [output]")
+    return [name for _, name in sorted(found, reverse=True)]  # same time: by name, backwards (…_00002 before …_00001)
+
+
+@routes.get("/phone/api/files")
+async def list_files(request):
+    kind = request.rel_url.query.get("kind")
+    if kind not in ("image", "video", "audio"):
+        return web.json_response({"error": "kind must be image, video or audio"}, status=400)
+    return web.json_response(await asyncio.to_thread(_files, kind))
 
 
 @routes.delete("/phone/api/workflows/{id}")
@@ -411,9 +475,9 @@ async def create_job(request):
     except ValueError as exc:
         return web.json_response({"error": str(exc)}, status=400)
     # Some loaders (Trix) quietly take another picture when the file is gone, so check first.
-    for label, name in image_inputs(record, job["base"]):
+    for label, name in file_inputs(record, job["base"], media_kind):
         if not folder_paths.exists_annotated_filepath(name):
-            return web.json_response({"error": f"{label}: {name} is no longer on the PC. Choose the photo again."}, status=400)
+            return web.json_response({"error": f"{label}: {shown_file(name)} is no longer on the PC."}, status=400)
     for node, inp, picture, mask in alpha_masks(record, values, job["base"]):
         try:
             job["base"][node]["inputs"][inp] = await asyncio.to_thread(_with_mask, picture, mask)

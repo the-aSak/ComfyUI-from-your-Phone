@@ -1,5 +1,5 @@
 // Keeps the app shell available offline. Network first, so updates show up on the next reload.
-const CACHE = "shell-v71";
+const CACHE = "shell-v74";
 const SHELL = ["./", "app.js", "api.js", "editor.js", "gallery.js", "mask.js", "picker.js", "reorder.js", "settings.js", "library.js", "prompts.js", "tasks.js", "style.css",
   "vendor/photoswipe.esm.min.js", "vendor/photoswipe.css", "manifest.webmanifest", "icon-192.png", "icon-512.png"];
 const shellPaths = () => SHELL.map((p) => new URL(p, self.registration.scope).pathname);
