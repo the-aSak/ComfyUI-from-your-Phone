@@ -43,7 +43,8 @@ It is a ComfyUI custom node with the phone app built in. Nothing else to install
 
 **Workflows**
 - Text, numbers, switches, lists with search (models and LoRAs come live from the PC), seeds (random or fixed),
-  Power Lora Loader rows, photos from the phone with a mask you paint with your finger.
+  Power Lora Loader rows, photos from the phone or pictures from ComfyUI's `input` folder, with a mask you paint
+  with your finger.
 - Dynamic prompts like `{red|blue|green}` and `//` comments, rolled for each image as ComfyUI does.
 - Reorder, rename, reset to the PC's values. Pick how many images, tap **Generate**.
 - Works offline too: look at the workflows you opened on this phone before and change values; they go to the PC

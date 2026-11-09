@@ -2,8 +2,9 @@
 import { closeOnBack, h, splitPath } from "./api.js";
 
 /** describe(option) -> { name, folder }: the main line and the small one under it (default: file paths).
- * typeAhead: long lists put the cursor in the search field (opening the keyboard). */
-export function pick(title, options, current, describe = splitPath, typeAhead = true) {
+ * typeAhead: long lists put the cursor in the search field (opening the keyboard).
+ * thumb(option) -> image URL shown before the name, or null for none. */
+export function pick(title, options, current, describe = splitPath, typeAhead = true, thumb = null) {
   return new Promise((resolve) => {
     const search = h("input", { type: "search", placeholder: "Search…", className: "picker-search", "aria-label": `Search ${title}` });
     const list = h("ul", { className: "picker-list", role: "listbox", "aria-label": title });
@@ -26,7 +27,8 @@ export function pick(title, options, current, describe = splitPath, typeAhead = 
       list.replaceChildren(...matches.map((o) => {
         const { name, folder } = describe(o);
         return h("li", {},
-          h("button", { className: "picker-option", role: "option", "aria-selected": String(o === current), onclick: () => close(o) },
+          h("button", { className: `picker-option${thumb ? " with-thumb" : ""}`, role: "option", "aria-selected": String(o === current), onclick: () => close(o) },
+            thumb ? h("img", { className: "picker-thumb", src: thumb(o), alt: "", loading: "lazy" }) : null,
             h("span", { className: "picker-name", textContent: name }),
             folder ? h("span", { className: "picker-folder", textContent: folder }) : null));
       }));

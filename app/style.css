@@ -312,6 +312,9 @@ body.keyboard .generate-bar, body.keyboard .select-bar { bottom: 0; }
   cursor: pointer;
 }
 .picker-option[aria-selected="true"] .picker-name { color: var(--accent); }
+/* images from the PC's input folder: thumbnail left, name and folder beside it */
+.picker-option.with-thumb { display: grid; grid-template-columns: 64px 1fr; column-gap: 12px; align-items: center; }
+.picker-thumb { grid-row: span 2; width: 64px; height: 64px; object-fit: cover; border-radius: 8px; background: var(--surface); }
 
 /* ---------- tasks ---------- */
 .job { display: grid; gap: 6px; }

@@ -386,7 +386,7 @@ function control(field, value, prompt, loraOptions) {
     case "loras":
       return lorasControl(value ?? [], loraOptions, onChange);
     case "image":
-      return imageControl(field, value, prompt, onChange);
+      return imageControl(field, spec, value, prompt, onChange);
     case "bypass":
       return null; // a card with just the node's switch
     default:
@@ -414,7 +414,18 @@ async function upload(file) {
   return data.subfolder ? `${data.subfolder}/${data.name}` : data.name;
 }
 
-function imageControl(field, value, prompt, onChange) {
+/** The pictures in ComfyUI's input folder, as the loader lists them; asked anew so new files show up. */
+async function inputImages(classType, input, spec) {
+  try {
+    const info = await api(`/api/object_info/${encodeURIComponent(classType)}`);
+    specCache.set(classType, info[classType]?.input ?? {});
+    return comboOptions(specOf(classType, input));
+  } catch {
+    return comboOptions(spec); // offline: the list from when the workflow was opened
+  }
+}
+
+function imageControl(field, spec, value, prompt, onChange) {
   // value: { image, mask }; mask null = the PC's mask, "" = none
   let current = typeof value === "string" ? { image: value, mask: null } : { ...value };
   const node = prompt[field.node] ?? { inputs: {} };
@@ -462,9 +473,18 @@ function imageControl(field, value, prompt, onChange) {
       caption,
       h("div", { className: "image-actions" },
         h("button", { className: "chip", textContent: "Choose photo", onclick: () => fileInput.click() }),
+        h("button", { className: "chip", textContent: "From PC", onclick: fromPC }),
         hasMask ? h("button", { className: "chip", textContent: "Paint mask", onclick: () => openPainter(mask) }) : null,
         hasMask && mask ? h("button", { className: "chip", textContent: "Clear mask", onclick: () => update({ ...current, mask: "" }) }) : null),
       fileInput);
+  }
+
+  async function fromPC() {
+    const images = await inputImages(node.class_type, field.input, spec);
+    if (!images.length) return toast("No pictures in ComfyUI's input folder on the PC", "bad");
+    const chosen = await pick("Pictures on the PC", images, current.image,
+      (o) => ({ name: o.split("/").pop(), folder: o.split("/").slice(0, -1).join("/") }), false, (o) => inputThumb(o, 512));
+    if (chosen !== undefined && chosen !== current.image) update({ image: chosen, mask: hasMask ? "" : null });
   }
 
   async function openPainter(mask) {
