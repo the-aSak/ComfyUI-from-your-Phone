@@ -301,22 +301,30 @@ function nodeGroup(node, checked, bypassable, open) {
   const boxes = node.fields.map((f) => el("input", { type: "checkbox", checked: checked.has(keyOf(f)), _field: f }));
   const bypassBox = el("input", { type: "checkbox", checked: bypassable.has(node.id) });
   const count = el("span", { className: "count" });
-  const updateCount = () => {
+  const bypassHint = el("span", { className: "preview" });
+  // The user's own tick, back when no setting forces it. Forced last time says nothing about it: then off.
+  let ownBypass = bypassBox.checked && !(node.pcOff && boxes.some((b) => b.checked));
+  const update = () => {
+    // Bypassed on the PC with a setting on the phone: always with its switch, or it would suddenly run there.
+    const forced = !!node.pcOff && boxes.some((b) => b.checked);
+    bypassBox.checked = forced || ownBypass;
+    bypassBox.disabled = forced;
+    bypassHint.textContent = forced ? "ticked because the node is bypassed on the PC: with a setting shared, it always gets its switch"
+      : node.fields.length ? "a switch on the phone turns this node off (alone: a card with just the switch)"
+        : "a card with a switch on the phone turns this node off";
     const n = boxes.filter((b) => b.checked).length;
     count.textContent = [n && `${n} selected`, bypassBox.checked && "bypass"].filter(Boolean).join(" · ");
   };
-  [...boxes, bypassBox].forEach((b) => b.addEventListener("change", updateCount));
-  updateCount();
+  bypassBox.addEventListener("change", () => (ownBypass = bypassBox.checked));
+  [...boxes, bypassBox].forEach((b) => b.addEventListener("change", update));
+  update();
   const rows = node.fields.map((f, i) =>
     // The internal name too, when it differs: it tells similar-sounding settings apart.
     el("label", { className: "row" }, boxes[i],
       el("span", {}, f.shown, f.shown !== f.input ? el("small", { className: "internal", textContent: f.input }) : ""),
       el("span", { className: "kind", textContent: f.kind }), el("span", { className: "preview", textContent: preview(f) })));
   const bypassRow = el("label", { className: "row bypass" }, bypassBox, el("span", { textContent: "Bypass on phone" }),
-    el("span", { className: "kind", textContent: "switch" }),
-    el("span", { className: "preview", textContent: node.fields.length
-      ? "a switch on the phone turns this node off (alone: a card with just the switch)"
-      : "a card with a switch on the phone turns this node off" }));
+    el("span", { className: "kind", textContent: "switch" }), bypassHint);
   const summary = el("summary", {}, el("span", { textContent: node.title }),
     el("small", { textContent: `${node.classType} · #${node.id}${node.pcOff ? " · bypassed on the PC: on the phone with a switch, off at first" : ""}` }), count);
   return { element: el("details", { open }, summary, ...rows, bypassRow), boxes, bypassBox, node };
@@ -483,8 +491,7 @@ async function openShareDialog() {
     const name = nameInput.value.trim();
     const fields = allBoxes.filter((b) => b.checked)
       .map(({ _field: f }) => ({ node: f.node, input: f.input, kind: f.kind, label: f.label, ...(f.kind === "note" && { text: f.text }) }));
-    // Bypassed on the PC with a setting on the phone: always with its switch, or it would suddenly run.
-    const switched = groups.filter((g) => g.bypassBox.checked || (g.node.pcOff && g.boxes.some((b) => b.checked)));
+    const switched = groups.filter((g) => g.bypassBox.checked); // ticked by itself where a setting forces it (nodeGroup)
     const bypass = Object.fromEntries(switched.map((g) => [g.node.id, passthrough(g.node.id)]));
     // Bypass without a shared setting: the phone gets a card with just the switch.
     for (const g of switched) {
