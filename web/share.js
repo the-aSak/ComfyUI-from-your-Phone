@@ -98,6 +98,41 @@ function graphNode(id) {
   }
 }
 
+const BYPASS_MODE = 4; // LiteGraph's mode of a bypassed node; 0 = runs
+
+/** Nodes bypassed on the canvas, also inside subgraphs. Not a bypassed subgraph itself: the phone has no single
+ * node to switch for it. */
+function bypassedNodes(graph, found = []) {
+  for (const node of graph?._nodes ?? []) {
+    if (node.subgraph) {
+      if (node.mode === 0) bypassedNodes(node.subgraph, found);
+    } else if (node.mode === BYPASS_MODE) {
+      found.push(node);
+    }
+  }
+  return found;
+}
+
+/** ComfyUI's export with these bypassed nodes switched on for the moment. */
+async function exportWith(nodes) {
+  try {
+    nodes.forEach((n) => (n.mode = 0));
+    return await app.graphToPrompt();
+  } finally {
+    nodes.forEach((n) => (n.mode = BYPASS_MODE));
+  }
+}
+
+/** base: the workflow as ComfyUI sends it. ComfyUI's export leaves out nodes bypassed on the PC; full has them
+ * too, only to list them (pcOff: their prompt ids). A bypassed node ComfyUI doesn't know stays out: off, it
+ * doesn't stop the workflow from running. */
+async function exportWorkflow(defs) {
+  const base = await app.graphToPrompt();
+  const off = bypassedNodes(app.graph).filter((n) => defs[n.comfyClass ?? n.type]);
+  const full = off.length ? await exportWith(off) : base;
+  return { base, full, pcOff: new Set(Object.keys(full.output).filter((id) => !(id in base.output))) };
+}
+
 // Nodes that show text or a value (Preview as Text, Show Text, Display Any, Display Int…): the phone shows
 // what they show. "int" only as a word, or every "Preview Point Cloud" would count.
 const TEXT_NODE = /(preview|show|display).*(text|any|string|(?<![a-z])int|float|number|bool|value|json)|(text|string).*(preview|show|display)/i;
@@ -283,24 +318,36 @@ function nodeGroup(node, checked, bypassable, open) {
       ? "a switch on the phone turns this node off (alone: a card with just the switch)"
       : "a card with a switch on the phone turns this node off" }));
   const summary = el("summary", {}, el("span", { textContent: node.title }),
-    el("small", { textContent: `${node.classType} · #${node.id}` }), count);
+    el("small", { textContent: `${node.classType} · #${node.id}${node.pcOff ? " · bypassed on the PC: on the phone with a switch, off at first" : ""}` }), count);
   return { element: el("details", { open }, summary, ...rows, bypassRow), boxes, bypassBox, node };
 }
 
 async function openShareDialog() {
   injectStyles();
-  const toast = (severity, summary, detail) =>
-    app.extensionManager?.toast?.add({ severity, summary, detail, life: 4000 }) ?? alert(`${summary}\n${detail ?? ""}`);
+  // toast.add returns nothing, so no "?? alert": that showed every message twice.
+  const toast = (severity, summary, detail) => {
+    const toasts = app.extensionManager?.toast;
+    if (toasts) toasts.add({ severity, summary, detail, life: 4000 });
+    else alert(`${summary}\n${detail ?? ""}`);
+  };
 
-  let prompt, defs, shares;
+  let base, full, pcOff, defs, shares;
   try {
-    [prompt, defs, shares] = await Promise.all([
-      app.graphToPrompt(),
+    [defs, shares] = await Promise.all([
       fetch("/api/object_info").then((r) => r.json()),
       fetch(`${API}/workflows`).then((r) => r.json()),
     ]);
+    ({ base, full, pcOff } = await exportWorkflow(defs));
   } catch (err) {
     toast("error", "Share to phone failed", String(err));
+    return;
+  }
+  // A node ComfyUI doesn't know (not installed, or newer than this ComfyUI) couldn't run anyway.
+  const unknown = Object.entries(full.output).filter(([, n]) => !defs[n.class_type])
+    .map(([id, n]) => n.class_type ?? graphNode(id)?.type ?? `#${id}`);
+  if (unknown.length) {
+    toast("error", "Can't share this workflow", `ComfyUI doesn't know these nodes: ${[...new Set(unknown)].join(", ")}. `
+      + "Install or update them first.");
     return;
   }
 
@@ -308,7 +355,7 @@ async function openShareDialog() {
   const source = active?.filename ?? "";
   // The saved file ("workflows/x.json"), so the phone can tell when it changed; none for an unsaved one.
   const path = active && !active.isTemporary && active.path?.startsWith("workflows/") ? active.path : null;
-  const graphId = /[^0-]/.test(prompt.workflow?.id ?? "0") ? prompt.workflow.id : null;
+  const graphId = /[^0-]/.test(base.workflow?.id ?? "0") ? base.workflow.id : null;
   const previous = shares.find((s) => sameWorkflow(s, path, graphId));
   const byId = previous && sameWorkflow(previous, path, graphId) === "id";
   let checked;
@@ -320,8 +367,10 @@ async function openShareDialog() {
     bypassable = new Set(Object.keys(record.bypass ?? {}));
   }
 
-  const nodes = collectNodes(prompt.output, defs);
-  if (!checked) checked = new Set(nodes.flatMap((n) => n.fields.filter((f) => f.suggested).map(keyOf)));
+  const nodes = collectNodes(full.output, defs);
+  nodes.forEach((n) => (n.pcOff = pcOff.has(n.id)));
+  // Suggestions are ticked only on nodes that run on the PC; bypassed ones are listed, never ticked by themselves.
+  if (!checked) checked = new Set(nodes.filter((n) => !n.pcOff).flatMap((n) => n.fields.filter((f) => f.suggested).map(keyOf)));
 
   const nameInput = el("input", { type: "text", value: previous?.name ?? source ?? "Workflow", maxLength: 120 });
   // Renamed on the phone: that name stays; changing the name here makes it a new workflow on the phone.
@@ -368,9 +417,9 @@ async function openShareDialog() {
 
   // Texts on the phone, in the order they are ticked. New or older shares: all of them, top to bottom;
   // a text node added since the last share is ticked too, at the end.
-  const textNodes = collectTextNodes(prompt.output, defs);
+  const textNodes = collectTextNodes(full.output, defs);
   const choice = record?.text_choice;
-  const isNew = (id) => !choice || (!choice.order.includes(id) && !choice.hidden.includes(id));
+  const isNew = (id) => !pcOff.has(id) && (!choice || (!choice.order.includes(id) && !choice.hidden.includes(id)));
   let textOrder = [...(choice?.order ?? []).filter((id) => textNodes.some((t) => t.id === id)),
     ...textNodes.filter((t) => isNew(t.id)).map((t) => t.id)];
   if (textNodes.length) {
@@ -387,7 +436,8 @@ async function openShareDialog() {
         paint();
       });
       places.set(t.id, el("span", { className: "preview" }));
-      return el("label", { className: "row" }, box, el("span", { textContent: t.title }),
+      return el("label", { className: "row" }, box,
+        el("span", { textContent: pcOff.has(t.id) ? `${t.title} (bypassed on the PC: shown only with Bypass on phone)` : t.title }),
         el("span", { className: "kind", textContent: "text" }), places.get(t.id));
     });
     paint();
@@ -433,7 +483,8 @@ async function openShareDialog() {
     const name = nameInput.value.trim();
     const fields = allBoxes.filter((b) => b.checked)
       .map(({ _field: f }) => ({ node: f.node, input: f.input, kind: f.kind, label: f.label, ...(f.kind === "note" && { text: f.text }) }));
-    const switched = groups.filter((g) => g.bypassBox.checked);
+    // Bypassed on the PC with a setting on the phone: always with its switch, or it would suddenly run.
+    const switched = groups.filter((g) => g.bypassBox.checked || (g.node.pcOff && g.boxes.some((b) => b.checked)));
     const bypass = Object.fromEntries(switched.map((g) => [g.node.id, passthrough(g.node.id)]));
     // Bypass without a shared setting: the phone gets a card with just the switch.
     for (const g of switched) {
@@ -456,12 +507,18 @@ async function openShareDialog() {
     }
     shareBtn.disabled = true;
     try {
+      // Only the bypassed nodes that come to the phone are switched on for the export. ComfyUI bypasses all others
+      // itself, as on the PC: the dialog's passthrough is only a close guess of ComfyUI's rule.
+      const coming = switched.map((g) => g.node.id).filter((id) => pcOff.has(id));
+      const prompt = coming.length ? await exportWith(coming.map(graphNode).filter(Boolean)) : base;
+      const texts = textOrder.filter((id) => id in prompt.output);
       const res = await fetch(`${API}/workflows`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, source, path, prompt: prompt.output, workflow: prompt.workflow, fields, bypass,
+        body: JSON.stringify({ name, source, path, prompt: prompt.output, workflow: base.workflow, fields, bypass,
+          pc_bypassed: Object.fromEntries(coming.map((id) => [id, passthrough(id)])),
           dynamic: dynamicTemplates(prompt.output, defs),
-          texts: { order: textOrder, hidden: textNodes.map((t) => t.id).filter((id) => !textOrder.includes(id)) } }),
+          texts: { order: texts, hidden: textNodes.map((t) => t.id).filter((id) => id in prompt.output && !texts.includes(id)) } }),
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
@@ -479,7 +536,7 @@ async function openShareDialog() {
       const what = [count(settings, "setting", "settings"),
         ...(switched.length ? [count(switched.length, "on/off switch", "on/off switches")] : []),
         ...(noteCount ? [count(noteCount, "note", "notes")] : []),
-        ...(textOrder.length ? [count(textOrder.length, "text", "texts")] : [])];
+        ...(texts.length ? [count(texts.length, "text", "texts")] : [])];
       toast("success", previous && !renamed ? "Updated on phone" : "Shared to phone", `${name}: ${what.join(", ")}`);
       close();
     } catch (err) {

@@ -36,8 +36,8 @@ It is a ComfyUI custom node with the phone app built in. Nothing else to install
 **On the PC**
 - **File → Share to phone** sends the open workflow to the phone, saved or not. A dialog lists every setting of
   every node; you tick the ones the phone may change. Prompts, seeds, sizes, models and LoRAs come pre-ticked.
-- Also: widgets you exposed on a subgraph, notes on the canvas, on/off (bypass) switches for single nodes, and
-  which text outputs the phone shows, in your order.
+- Also: widgets you exposed on a subgraph, notes on the canvas, on/off (bypass) switches for single nodes, also for
+  nodes bypassed on the PC (they start off on the phone), and which text outputs the phone shows, in your order.
 - Sharing the same workflow again updates it on the phone and keeps what you set there. Under a new name it
   becomes a second workflow on the phone (the dialog asks whether to remove the old one).
 

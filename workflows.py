@@ -46,6 +46,40 @@ def read_file(path):
             time.sleep(wait)
 
 
+def _is_int(v):
+    return isinstance(v, int) and not isinstance(v, bool)
+
+
+def _is_link(v):
+    return isinstance(v, list) and len(v) == 2 and isinstance(v[0], str) and _is_int(v[1])
+
+
+def apply_bypass(prompt, record, node_ids):
+    """Bypasses nodes the way ComfyUI does: each link from a bypassed node is replaced by what the node
+    would hand through (worked out by the share dialog), or dropped when nothing fits."""
+    removed = {n: prompt.pop(n) for n in node_ids if n in prompt}
+    if not removed:
+        return
+
+    def resolve(link):
+        for _ in range(len(removed) + 1):  # a chain of bypassed nodes, never a loop
+            if not (_is_link(link) and link[0] in removed):
+                return link if _is_link(link) else None
+            names = (record.get("bypass") or {}).get(link[0]) or []
+            name = names[link[1]] if link[1] < len(names) else None
+            link = removed[link[0]]["inputs"].get(name) if name else None
+        return None
+
+    for node in prompt.values():
+        for key, value in list(node["inputs"].items()):
+            if _is_link(value) and value[0] in removed:
+                new = resolve(value)
+                if new is None:
+                    del node["inputs"][key]
+                else:
+                    node["inputs"][key] = new
+
+
 def field_key(field):
     # Node ids may contain ":" (subgraphs) but never "/", so this stays unambiguous.
     return f"{field['node']}/{field['input']}"
@@ -177,7 +211,17 @@ def validate_share(body):
     bypass = body.get("bypass") or {}
     if not isinstance(bypass, dict) or len(bypass) > MAX_FIELDS:
         raise ValueError("bypass must be an object")
+    # Nodes bypassed on the PC that come to the phone: ComfyUI's export leaves them out, so the dialog adds them,
+    # each with what its outputs hand through. With a field they get a switch, starting off; any others are
+    # bypassed below, as on the PC (the dialog sends none: ComfyUI bypasses those itself).
+    pc_bypassed = body.get("pc_bypassed") or {}
+    if not (isinstance(pc_bypassed, dict) and len(pc_bypassed) <= MAX_FIELDS
+            and all(n in prompt and isinstance(o, list) and len(o) <= 64 for n, o in pc_bypassed.items())):
+        raise ValueError("pc_bypassed must name nodes of the workflow")
+    pc_bypassed = {n: [o if isinstance(o, str) and o in prompt[n]["inputs"] else None for o in outputs]
+                   for n, outputs in pc_bypassed.items()}
     shared_nodes = {f["node"] for f in clean}
+    bypass = {**{n: o for n, o in pc_bypassed.items() if n in shared_nodes}, **bypass}
     clean_bypass = {}
     for node, outputs in bypass.items():
         if node not in shared_nodes:
@@ -210,8 +254,19 @@ def validate_share(body):
                    for ids in lists):
             raise ValueError("texts must list nodes of the workflow")
         text_choice = {"order": list(dict.fromkeys(lists[0])), "hidden": sorted(set(lists[1]) - set(lists[0]))}
+    pc_off = [n for n in pc_bypassed if n in clean_bypass]  # switches that are off on the PC
+    dropped = [n for n in pc_bypassed if n not in clean_bypass]
+    apply_bypass(prompt, {"bypass": pc_bypassed}, dropped)
+    if text_choice:
+        text_choice = {k: [n for n in ids if n in prompt] for k, ids in text_choice.items()}
     return {"name": name.strip(), "source": source, "source_path": source_path, "prompt": prompt, "workflow": workflow,
-            "fields": clean, "bypass": clean_bypass, "dynamic": sorted(dynamic), "text_choice": text_choice}
+            "fields": clean, "bypass": clean_bypass, "dynamic": sorted(k for k in dynamic if k.split("/", 1)[0] in prompt),
+            "text_choice": text_choice, "pc_off": pc_off}
+
+
+def pc_values(record):
+    """The values of a share as it came from the PC: none of the phone's, its switches as on the PC."""
+    return {BYPASS_KEY: record["pc_off"]} if record.get("pc_off") else {}
 
 
 def pc_file_state(item, user_dir):
@@ -298,7 +353,7 @@ class WorkflowStore:
             old = self.get(workflow_id)
         except KeyError:
             old = None
-        record = dict(cleaned, id=workflow_id, shared_at=time.time(), values={})
+        record = dict(cleaned, id=workflow_id, shared_at=time.time(), values=pc_values(cleaned))
         # Only the same workflow updates its share. Another one under the same name replaces it and starts
         # fresh: the old one's phone values could land in fields of a different workflow otherwise.
         if old and same_workflow(old, cleaned, user_dir):
@@ -306,9 +361,18 @@ class WorkflowStore:
             # Values typed on the phone survive a re-share for every field that is still shared.
             keys = {field_key(f) for f in record["fields"]}
             record["values"] = {k: v for k, v in old.get("values", {}).items() if k in keys}
-            still = [n for n in old.get("values", {}).get(BYPASS_KEY, []) if n in record["bypass"]]
-            if still:
-                record["values"][BYPASS_KEY] = still
+            # Switches like fields: one changed on the phone keeps the phone's state; one left as the PC had it
+            # (shares from before "pc_off": every node ran on the PC) and a new one follow the PC now.
+            was_off = set(old.get("values", {}).get(BYPASS_KEY, []))
+            pc_was_off = set(old.get("pc_off", []))
+            old_switches = old.get("bypass") or {}
+            off = []
+            for n in record["bypass"]:
+                changed_on_phone = n in old_switches and (n in was_off) != (n in pc_was_off)
+                if (n in was_off) if changed_on_phone else (n in record.get("pc_off", [])):
+                    off.append(n)
+            if off:
+                record["values"][BYPASS_KEY] = off
             if old.get("phone_name"):
                 record["phone_name"] = old["phone_name"]
         self._write(workflow_id, record)

@@ -13,9 +13,11 @@ import uuid
 from pathlib import Path
 
 try:
-    from .workflows import BYPASS_KEY, HALF_CHARACTERS, field_key, read_file, replace_file, share_recipe
+    from .workflows import (BYPASS_KEY, HALF_CHARACTERS, _is_int, _is_link, apply_bypass, field_key, read_file,
+                            replace_file, share_recipe)
 except ImportError:  # loaded standalone by the tests
-    from workflows import BYPASS_KEY, HALF_CHARACTERS, field_key, read_file, replace_file, share_recipe
+    from workflows import (BYPASS_KEY, HALF_CHARACTERS, _is_int, _is_link, apply_bypass, field_key, read_file,
+                           replace_file, share_recipe)
 
 SEED_MAX = 2**50  # inside every seed widget's range (rgthree allows ±2^50) and exact in JavaScript
 MAX_TEXT = 50_000
@@ -34,10 +36,6 @@ log = logging.getLogger("comfy-phone")
 def _is_number(v):
     # Not Infinity or NaN: Python's json reads them, but the browser can't, so the workflow wouldn't open again.
     return _is_int(v) or (isinstance(v, float) and math.isfinite(v))
-
-
-def _is_int(v):
-    return isinstance(v, int) and not isinstance(v, bool)
 
 
 def _safe_input_name(name):
@@ -102,36 +100,6 @@ def apply_loras(inputs, loras):
     for i, lora in enumerate(loras, 1):
         # strengthTwo None = clip strength follows model strength (the phone edits one strength)
         inputs[f"lora_{i}"] = {"on": lora["on"], "lora": lora["lora"], "strength": lora["strength"], "strengthTwo": None}
-
-
-def _is_link(v):
-    return isinstance(v, list) and len(v) == 2 and isinstance(v[0], str) and _is_int(v[1])
-
-
-def apply_bypass(prompt, record, node_ids):
-    """Bypasses nodes the way ComfyUI does: each link from a bypassed node is replaced by what the node
-    would hand through (worked out by the share dialog), or dropped when nothing fits."""
-    removed = {n: prompt.pop(n) for n in node_ids if n in prompt}
-    if not removed:
-        return
-
-    def resolve(link):
-        for _ in range(len(removed) + 1):  # a chain of bypassed nodes, never a loop
-            if not (_is_link(link) and link[0] in removed):
-                return link if _is_link(link) else None
-            names = (record.get("bypass") or {}).get(link[0]) or []
-            name = names[link[1]] if link[1] < len(names) else None
-            link = removed[link[0]]["inputs"].get(name) if name else None
-        return None
-
-    for node in prompt.values():
-        for key, value in list(node["inputs"].items()):
-            if _is_link(value) and value[0] in removed:
-                new = resolve(value)
-                if new is None:
-                    del node["inputs"][key]
-                else:
-                    node["inputs"][key] = new
 
 
 def apply_values(record, values):

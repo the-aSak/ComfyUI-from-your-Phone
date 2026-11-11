@@ -17,7 +17,7 @@ from server import PromptServer
 from .jobs import MASK_PREFIX, VIDEO_SUFFIXES, JobQueue, alpha_masks, apply_values, build_job, file_inputs, job_details, shown_file, validate_values
 from .prompts import PromptLibrary
 from .push import Push, missing_packages
-from .workflows import WorkflowStore, pc_file_state, validate_share
+from .workflows import WorkflowStore, pc_file_state, pc_values, validate_share
 
 ROOT = Path(__file__).parent
 APP_DIR = (ROOT / "app").resolve()
@@ -327,7 +327,7 @@ async def save_values(request):
 async def reset_values(request):
     # "Reset to PC values" also brings back the PC's name.
     record = _get_record(request)
-    STORE.set_values(record["id"], {})
+    STORE.set_values(record["id"], pc_values(record))  # switches back as on the PC, too
     STORE.rename(record["id"], None)
     return web.json_response({"ok": True})
 
